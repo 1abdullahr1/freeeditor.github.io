@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Image Viewer with Annotations and Filters</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.css">
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin: 20px; background-color: #f4f4f9; color: #333; }
+        #drop-area { border: 2px dashed #ccc; padding: 40px; cursor: pointer; background-color: #fff; margin-bottom: 20px; }
+        .gallery img { max-width: 100px; height: auto; margin: 10px; cursor: pointer; }
+        .buttons { margin: 10px 0; display: flex; justify-content: center; flex-wrap: wrap; }
+        button { padding: 10px 20px; margin: 5px; border: none; border-radius: 5px; background: #007BFF; color: white; cursor: pointer; transition: background 0.3s; }
+        button:hover { background: #0056b3; }
+        .viewer img, .canvas-container { max-width: 100%; height: auto; margin-top: 20px; }
+        .canvas-container { display: none; position: relative; }
+        #annotation-input { display: block; margin: 10px auto; padding: 10px; width: 80%; }
+        #crop-dimensions { display: flex; justify-content: center; align-items: center; margin-top: 10px; }
+        #crop-dimensions input { margin: 0 5px; padding: 5px; }
+        .multi-image { display: flex; justify-content: center; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script src="https://unpkg.com/react/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.12/cropper.min.js"></script>
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        function ImageViewer() {
+            const [images, setImages] = useState([]);
+            const [currentImage, setCurrentImage] = useState(null);
+            const [transform, setTransform] = useState({ rotate: 0, scale: 1 });
+            const [cropping, setCropping] = useState(false);
+            const [drawing, setDrawing] = useState(false);
+            const [addingText, setAddingText] = useState(false);
+            const [text, setText] = useState("");
+            const [multiImages, setMultiImages] = useState([]);
+            const [filter, setFilter] = useState('none');
+            const imgRef = useRef(null);
+            const canvasRef = useRef(null);
+            const cropperRef = useRef(null);
+
+            useEffect(() => {
+                if (cropping && imgRef.current) {
+                    cropperRef.current = new Cropper(imgRef.current, { aspectRatio: NaN });
+                } else if (cropperRef.current) {
+                    cropperRef.current.destroy();
+                    cropperRef.current = null;
+                }
+            }, [cropping, currentImage]);
+
+            useEffect(() => {
+                if (drawing && canvasRef.current) {
+                    const canvas = canvasRef.current;
+                    const ctx = canvas.getContext('2d');
+                    let painting = false;
+
+                    const startPosition = (e) => {
+                        painting = true;
+                        draw(e);
+                    };
+                    const endPosition = () => {
+                        painting = false;
+                        ctx.beginPath();
+                    };
+                    const draw = (e) => {
+                        if (!painting) return;
+                        ctx.lineWidth = 5;
+                        ctx.lineCap = 'round';
+                        ctx.strokeStyle = 'black';
+
+                        ctx.lineTo(e.clientX - canvas.offsetLeft, e.clientY - canvas.offsetTop);
+                        ctx.stroke();
+                        ctx.beginPath();
+                        ctx.moveTo(e.clientX - canvas.offsetLeft, e.clientY - canvas.offsetTop);
+                    };
+
+                    canvas.addEventListener('mousedown', startPosition);
+                    canvas.addEventListener('mouseup', endPosition);
+                    canvas.addEventListener('mousemove', draw);
+
+                    return () => {
+                        canvas.removeEventListener('mousedown', startPosition);
+                        canvas.removeEventListener('mouseup', endPosition);
+                        canvas.removeEventListener('mousemove', draw);
+                    };
+                }
+            }, [drawing]);
+
+            const handleFiles = (files) => {
+                const newImages = [];
+                for (let file of files) {
+                    if (file.type.startsWith('image/')) {
+                        const url = URL.createObjectURL(file);
+                        newImages.push(url);
+                    }
+                }
+                setImages([...images, ...newImages]);
+                if (newImages.length > 0) setCurrentImage(newImages[0]);
+            };
+
+            const handleDrop = (e) => {
+                e.preventDefault();
+                handleFiles(e.dataTransfer.files);
+            };
+
+            const rotateLeft = () => setTransform({ ...transform, rotate: transform.rotate - 90 });
+            const rotateRight = () => setTransform({ ...transform, rotate: transform.rotate + 90 });
+            const zoomIn = () => setTransform({ ...transform, scale: transform.scale * 1.5 });
+            const zoomOut = () => setTransform({ ...transform, scale: transform.scale / 1.5 });
+            const startCrop = () => setCropping(true);
+            const applyCrop = () => {
+                if (cropperRef.current) {
+                    const croppedCanvas = cropperRef.current.getCroppedCanvas();
+                    const croppedImgUrl = croppedCanvas.toDataURL();
+                    setCurrentImage(croppedImgUrl);
+                    setCropping(false);
+                }
+            };
+            const startDrawing = () => {
+                setDrawing(!drawing);
+                setAddingText(false);
+            };
+            const startAddingText = () => {
+                setAddingText(!addingText);
+                setDrawing(false);
+            };
+            const handleTextChange = (e) => {
+                setText(e.target.value);
+            };
+            const addTextToImage = () => {
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                ctx.font = '30px Arial';
+                ctx.fillStyle = 'red';
+                ctx.fillText(text, 50, 50);
+                setText("");
+                setAddingText(false);
+            };
+            const cropByDimensions = () => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const img = new Image();
+                img.src = currentImage;
+                img.onload = () => {
+                    canvas.width = Number(document.getElementById('crop-width').value);
+                    canvas.height = Number(document.getElementById('crop-height').value);
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    const croppedImgUrl = canvas.toDataURL();
+                    setCurrentImage(croppedImgUrl);
+                };
+            };
+            const downloadImage = (format) => {
+                const a = document.createElement('a');
+                a.href = currentImage;
+                a.download = `edited-image.${format}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            };
+            const combineImages = () => {
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                const imagesToCombine = [...multiImages, currentImage];
+                let loadedImages = 0;
+                const imgElements = imagesToCombine.map(src => {
+                    const img = new Image();
+                    img.src = src;
+                    img.onload = () => {
+                        loadedImages += 1;
+                        if (loadedImages === imagesToCombine.length) {
+                            let width = 0, height = 0;
+                            imgElements.forEach(img => {
+                                width = Math.max(width, img.width);
+                                height += img.height;
+                            });
+                            canvas.width = width;
+                            canvas.height = height;
+                            let yOffset = 0;
+                            imgElements.forEach(img => {
+                                ctx.drawImage(img, 0, yOffset);
+                                yOffset += img.height;
+                            });
+                            const combinedImgUrl = canvas.toDataURL();
+                            setCurrentImage(combinedImgUrl);
+                        }
+                    };
+                    return img;
+                });
+            };
+            const applyFilter = (filter) => {
+                setFilter(filter);
+            };
+
+            return (
+                <div>
+                    <h1>Advanced Image Viewer with Annotations and Filters</h1>
+                    <div id="drop-area" onDragOver={(e) => e.preventDefault()} onDrop={handleDrop}>
+                        <p>Drag & Drop Image Here or Click to Select</p>
+                        <input type="file" id="fileElem" accept="image/*" style={{ display: 'none' }} multiple onChange={(e) => handleFiles(e.target.files)} />
+                        <button onClick={() => document.getElementById('fileElem').click()}>Select Images</button>
+                    </div>
+                    <div className="gallery">
+                        {images.map((src, index) => (
+                            <img key={index} src={src} onClick={() => setCurrentImage(src)} />
+                        ))}
+                    </div>
+                    <div className="multi-image">
+                        {multiImages.map((src, index) => (
+                            <img key={index} src={src} onClick={() => setMultiImages(multiImages.filter((_, i) => i !== index))} />
+                        ))}
+                    </div>
+                    {currentImage && (
+                        <div>
+                            <div className="buttons">
+                                <button onClick={rotateLeft}>Rotate Left</button>
+                                <button onClick={rotateRight}>Rotate Right</button>
+                                <button onClick={zoomIn}>Zoom In</button>
+                                <button onClick={zoomOut}>Zoom Out</button>
+                                <button onClick={startCrop}>{cropping ? 'Cancel Crop' : 'Start Crop'}</button>
+                                {cropping && <button onClick={applyCrop}>Apply Crop</button>}
+                                <button onClick={startDrawing}>{drawing ? 'Stop Drawing' : 'Start Drawing'}</button>
+                                <button onClick={startAddingText}>{addingText ? 'Cancel Adding Text' : 'Add Text'}</button>
+                                <button onClick={() => setMultiImages([...multiImages, currentImage])}>Add to Multi</button>
+                                <button onClick={combineImages}>Combine Images</button>
+                                <button onClick={() => downloadImage('png')}>Download PNG</button>
+                                <button onClick={() => downloadImage('jpeg')}>Download JPEG</button>
+                                <button onClick={() => downloadImage('bmp')}>Download BMP</button>
+                                <select onChange={(e) => applyFilter(e.target.value)}>
+                                    <option value="none">No Filter</option>
+                                    <option value="grayscale(100%)">Grayscale</option>
+                                    <option value="sepia(100%)">Sepia</option>
+                                    <option value="invert(100%)">Invert</option>
+                                    <option value="brightness(200%)">Brightness</option>
+                                    <option value="contrast(200%)">Contrast</option>
+                                </select>
+                            </div>
+                            {addingText && (
+                                <div>
+                                    <input type="text" id="annotation-input" value={text} onChange={handleTextChange} placeholder="Enter text to add" />
+                                    <button onClick={addTextToImage}>Add Text</button>
+                                </div>
+                            )}
+                            <div id="crop-dimensions">
+                                <input type="number" id="crop-width" placeholder="Width" />
+                                <input type="number" id="crop-height" placeholder="Height" />
+                                <button onClick={cropByDimensions}>Crop by Dimensions</button>
+                            </div>
+                            {currentImage && (
+                                <div className="viewer" style={{ filter }}>
+                                    <img ref={imgRef} src={currentImage} style={{ transform: `rotate(${transform.rotate}deg) scale(${transform.scale})` }} />
+                                    <canvas ref={canvasRef} width="800" height="600" className="canvas-container"></canvas>
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        ReactDOM.render(<ImageViewer />, document.getElementById('root'));
+    </script>
+</body>
+</html>
